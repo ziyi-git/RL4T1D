@@ -1,0 +1,15 @@
+artifact_uri: file:///workspace/RL4T1D/experiments/mlruns/0/f4317f68573941258f5773697ec6ce5b/artifacts
+end_time: 1756775881090
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: f4317f68573941258f5773697ec6ce5b
+run_name: overjoyed-slug-911
+run_uuid: f4317f68573941258f5773697ec6ce5b
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1756775842081
+status: 3
+tags: []
+user_id: root

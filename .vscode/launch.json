@@ -1,0 +1,24 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "g2p2c+timer_xl: train",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "args": [
+                "experiment.name=g2p2c_timerxl_openltm_smoke",
+                "agent=g2p2c",
+                "env.patient_id=1",
+                "experiment.device=cpu",
+                "agent.debug=True",
+                "hydra/job_logging=disabled"
+            ]
+        }
+    ]
+}

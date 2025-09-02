@@ -68,3 +68,16 @@ kl: 1 # experimenting KL implementation
 bgp_pred_mode: False
 n_bgp_steps: 0
 pretrain_period: 5760
+
+# ---- Timer-XL (open-ltm) 相关参数（Tap-out）----
+glucose_model_type: timerxl_openltm    # 默认仍用原 MLP；切换为 timerxl_openltm 即启用 Timer-XL
+timerxl_input_token_len: 1
+timerxl_output_token_len: 1
+timerxl_covariate: false
+timerxl_flash_attention: false
+timerxl_d_model: 384
+timerxl_n_layer: 4
+timerxl_n_head: 6
+timerxl_d_ff: 1024
+timerxl_dropout: 0.0
+timerxl_activation: gelu

@@ -15,6 +15,45 @@ from utils import core
 from environment.reward_func import composite_reward
 
 
+# class GlucoseModel(nn.Module):
+#     def __init__(self, args, device):
+#         super(GlucoseModel, self).__init__()
+#         self.n_features = args.n_features
+#         self.device = device
+#         self.output = args.n_action
+
+#         self.n_hidden = args.n_rnn_hidden
+#         self.n_layers = args.n_rnn_layers
+#         self.bidirectional = args.bidirectional
+#         self.directions = args.rnn_directions
+#         self.feature_extractor = self.n_hidden * self.n_layers * self.directions
+#         self.last_hidden = self.feature_extractor #* 2
+#         self.fc_layer1 = nn.Linear(self.feature_extractor + self.output, self.last_hidden)
+#         self.cgm_mu = NormedLinear(self.last_hidden, self.output, scale=0.1)
+#         self.cgm_sigma = NormedLinear(self.last_hidden, self.output, scale=0.1)
+#         self.normal = torch.distributions.Normal(0, 1)
+
+#     def forward(self, extract_state, action, mode):
+#         #concat_dim = 1 if (mode == 'batch') else 0
+#         concat_dim = 1
+
+#         concat_state_action = torch.cat((extract_state, action), dim=concat_dim)
+#         fc_output1 = F.relu(self.fc_layer1(concat_state_action))
+#         fc_output = fc_output1
+#         # fc_output2 = F.relu(self.fc_layer2(fc_output1))
+#         # fc_output = F.relu(self.fc_layer3(fc_output2))
+#         cgm_mu = F.tanh(self.cgm_mu(fc_output))
+#         # deterministic
+#         # cgm_sigma = torch.zeros(1, device=self.device, dtype=torch.float32)
+#         # cgm = cgm_mu
+#         # probabilistic
+#         cgm_sigma = F.softplus(self.cgm_sigma(fc_output) + 1e-5)
+#         z = self.normal.sample()
+#         cgm = cgm_mu + cgm_sigma * z
+#         cgm = torch.clamp(cgm, -1, 1)
+#         return cgm_mu, cgm_sigma, cgm
+
+# === 修改/替换 class GlucoseModel 为如下版本 ===
 class GlucoseModel(nn.Module):
     def __init__(self, args, device):
         super(GlucoseModel, self).__init__()
@@ -27,30 +66,61 @@ class GlucoseModel(nn.Module):
         self.bidirectional = args.bidirectional
         self.directions = args.rnn_directions
         self.feature_extractor = self.n_hidden * self.n_layers * self.directions
-        self.last_hidden = self.feature_extractor #* 2
+
+        # --- 原始 sigma 分支保留（最小改动；便于对齐原有 NLL 训练） ---
+        self.last_hidden = self.feature_extractor
         self.fc_layer1 = nn.Linear(self.feature_extractor + self.output, self.last_hidden)
-        self.cgm_mu = NormedLinear(self.last_hidden, self.output, scale=0.1)
+        from agents.models.normed_linear import NormedLinear
         self.cgm_sigma = NormedLinear(self.last_hidden, self.output, scale=0.1)
+
+        # --- 新增: 选择后端 ---
+        self.glucose_model_type = getattr(args, "glucose_model_type", "mlp").lower()
+        if self.glucose_model_type == "timerxl_openltm":
+            # 引入我们在第 2 节写的适配器
+            from agents.models.timerxl_openltm_glucose import TimerXLGlucoseHead, _TimerXLConfig
+            timer_cfg = _TimerXLConfig(
+                input_token_len=getattr(args, "timerxl_input_token_len", 1),
+                output_token_len=getattr(args, "timerxl_output_token_len", 1),
+                covariate=getattr(args, "timerxl_covariate", False),
+                flash_attention=getattr(args, "timerxl_flash_attention", False),
+                d_model=getattr(args, "timerxl_d_model", 384),
+                n_heads=getattr(args, "timerxl_n_head", 6),
+                d_ff=getattr(args, "timerxl_d_ff", 1024),
+                e_layers=getattr(args, "timerxl_n_layer", 4),
+                dropout=getattr(args, "timerxl_dropout", 0.0),
+                activation=getattr(args, "timerxl_activation", "gelu"),
+                output_attention=False,
+                use_norm=False,
+            )
+            d_in_scalar = self.feature_extractor + self.output
+            self.timerxl_head = TimerXLGlucoseHead(d_in_scalar=d_in_scalar, timer_cfg=timer_cfg)
+            print("[00] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
+        else:
+            # 原始 mu 分支：NormedLinear（保留向后兼容）
+            self.cgm_mu = NormedLinear(self.last_hidden, self.output, scale=0.1)
+
         self.normal = torch.distributions.Normal(0, 1)
 
     def forward(self, extract_state, action, mode):
-        #concat_dim = 1 if (mode == 'batch') else 0
-        concat_dim = 1
+        concat_dim = 1  # 现有代码固定按 batch 维拼接
+        concat_state_action = torch.cat((extract_state, action), dim=concat_dim)  # [B, d_h + d_a]
 
-        concat_state_action = torch.cat((extract_state, action), dim=concat_dim)
+        # sigma 分支（保持原样）
         fc_output1 = F.relu(self.fc_layer1(concat_state_action))
-        fc_output = fc_output1
-        # fc_output2 = F.relu(self.fc_layer2(fc_output1))
-        # fc_output = F.relu(self.fc_layer3(fc_output2))
-        cgm_mu = F.tanh(self.cgm_mu(fc_output))
-        # deterministic
-        # cgm_sigma = torch.zeros(1, device=self.device, dtype=torch.float32)
-        # cgm = cgm_mu
-        # probabilistic
-        cgm_sigma = F.softplus(self.cgm_sigma(fc_output) + 1e-5)
-        z = self.normal.sample()
-        cgm = cgm_mu + cgm_sigma * z
-        cgm = torch.clamp(cgm, -1, 1)
+        cgm_sigma = F.softplus(self.cgm_sigma(fc_output1) + 1e-5)  # [B, 1]
+
+        # mu 分支：按后端选择
+        if self.glucose_model_type == "timerxl_openltm":
+            print("[2] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
+            cgm_mu = self.timerxl_head(concat_state_action)  # [B, 1]  已 tanh
+        else:
+            cgm_mu = torch.tanh(self.cgm_mu(fc_output1))     # 原始 MLP 头
+
+        # 采样并裁剪（与原实现一致）
+        # 注：为避免 GPU 下 device mismatch，建议 sample 与 mu 同形状、同 device
+        z = self.normal.sample(cgm_mu.size()).to(cgm_mu.device)
+        cgm = torch.clamp(cgm_mu + cgm_sigma * z, -1, 1)
+        print("[3] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
         return cgm_mu, cgm_sigma, cgm
 
 
@@ -71,8 +141,10 @@ class ActorNetwork(nn.Module):
         extract_states = self.FeatureExtractor.forward(s)
         mu, sigma, action, log_prob = self.ActionModule.forward(extract_states)
         if mode == 'forward':
+            print("[1] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
             cgm_mu, cgm_sigma, cgm = self.GlucoseModel.forward(extract_states, action.detach(), mode)
         else:
+            # print("[2] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
             cgm_mu, cgm_sigma, cgm = self.GlucoseModel.forward(extract_states, old_action.detach(), mode)
         return mu, sigma, action, log_prob, cgm_mu, cgm_sigma, cgm
 
