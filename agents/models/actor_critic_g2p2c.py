@@ -91,9 +91,17 @@ class GlucoseModel(nn.Module):
                 activation=getattr(args, "timerxl_activation", "gelu"),
                 output_attention=False,
                 use_norm=False,
+                # 新增：预训练/精调相关
+                pretrained_path=getattr(args, "timerxl_ckpt_path", ""),
+                pretrained_strict=getattr(args, "timerxl_strict", False),
+                map_location=getattr(args, "timerxl_map_location", "cpu"),
+                freeze_backbone=getattr(args, "timerxl_freeze_backbone", True),
+                finetune_head=getattr(args, "timerxl_finetune_head", True),
+                dtype=getattr(args, "timerxl_dtype", "fp32"),
             )
-            d_in_scalar = self.feature_extractor + self.output
-            self.timerxl_head = TimerXLGlucoseHead(d_in_scalar=d_in_scalar, timer_cfg=timer_cfg)
+            # d_in_scalar = self.feature_extractor + self.output
+            # self.timerxl_head = TimerXLGlucoseHead(d_in_scalar=d_in_scalar, timer_cfg=timer_cfg)
+            self.timerxl_head = TimerXLGlucoseHead(d_in_scalar=self.feature_extractor + self.output, timer_cfg=timer_cfg)
             print("[00] - [G2P2C] Using open-ltm Timer-XL (Tap-out) as GlucoseModel backend.")
         else:
             # 原始 mu 分支：NormedLinear（保留向后兼容）
@@ -251,6 +259,7 @@ class ActorCritic(nn.Module):
         s = torch.as_tensor(s, dtype=torch.float32, device=self.device).unsqueeze(0)  # add batch dimension
         mu, std, act, log_prob, cgm_mu, cgm_std, cgm = self.Actor(s, mode='forward')
         s_val, _, _, _ = self.Critic(s, action=None, cgm_pred=False)
+        print(f"in get_action: cgm[0] shape: {cgm[0].shape}, value: {cgm[0]}")
         data = dict(mu=mu[0], std=std[0], action=act[0], log_prob=log_prob[0], state_value=s_val[0],
                     cgm_mu=cgm_mu[0], cgm_std=cgm_std[0], cgm=cgm[0])
         return {k: v.detach().cpu().numpy() for k, v in data.items()}
@@ -263,6 +272,8 @@ class ActorCritic(nn.Module):
     def evaluate_actor(self, state, action, mode="forward"):  # evaluate actor <batch>
         if mode=="aux":
             action_mean, action_std, action, log_prob, cgm_mu, cgm_sigma, cgm = self.Actor(state, action)
+            print(f"in evaluate_actor: state shape: {state.shape}")  # torch.Size([512, 1])?
+            print(f"in evaluate_actor: cgm shape: {cgm.shape}, value: {cgm}")  # torch.Size([512, 512, 1])?
             dist = self.distribution(action_mean, action_std)
             action_logprobs = dist.log_prob(action)
             dist_entropy = dist.entropy()

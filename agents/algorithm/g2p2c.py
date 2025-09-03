@@ -180,8 +180,12 @@ class G2P2C(PPO):
         actions_batch = self.rollout_buffer['action']
         _, _, _, _, cgm_pred = self.policy.evaluate_actor(states_batch, actions_batch, mode="aux")
 
+        print(f"-> cgm_pred shape: {cgm_pred.shape}, cgm_target shape: {self.rollout_buffer['cgm_target'].shape}")
+
         cgm_pred = cgm_pred.detach().cpu().flatten().numpy()
         cgm_target = self.rollout_buffer['cgm_target'].detach().cpu().flatten().numpy()
+        
+        print(f"<- cgm_pred shape: {cgm_pred.shape}, cgm_target shape: {cgm_target.shape}")
 
         assert len(cgm_pred) == len(cgm_target), "Error: CGM prediction and target length mismatch."
 

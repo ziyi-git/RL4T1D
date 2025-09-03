@@ -6,3 +6,5 @@ results/
 .env
 experiments/nci/help.txt
 data/
+# 忽略 mlruns 目录
+experiments/mlruns/
